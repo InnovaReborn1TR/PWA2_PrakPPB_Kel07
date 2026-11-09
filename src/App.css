@@ -397,6 +397,16 @@
   gap: 20px;
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin: 24px 0;
+  color: var(--steel);
+  font-size: 0.9rem;
+}
+
 .card {
   position: relative;
   display: flex;
@@ -495,6 +505,33 @@
 
 .card-act-btn:hover {
   transform: scale(1.08);
+}
+
+.share-control {
+  position: relative;
+  display: inline-flex;
+}
+
+.share-feedback {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: min(280px, 80vw);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 4px 14px rgba(24, 34, 44, 0.12);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.share-feedback a {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
 }
 
 .fav-btn {

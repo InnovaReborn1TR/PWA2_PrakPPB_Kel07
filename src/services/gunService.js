@@ -1,4 +1,16 @@
 import { apiClient, IS_SUPABASE } from '../config/api'
+import { createQueryCache } from '../utils/queryCache'
+
+const queryCache = createQueryCache()
+
+const stableParams = (params) =>
+  JSON.stringify(
+    Object.fromEntries(
+      Object.entries(params).sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  )
+
+const invalidateGunQueries = () => queryCache.clear()
 
 // ---------------------------------------------------------------------------
 // Normalizer — standardizes product shape whether received from Supabase
@@ -63,63 +75,91 @@ class GunService {
   /**
    * Fetch a paginated, filterable list of products.
    */
-  async getGuns(params = {}) {
-    if (IS_SUPABASE) {
-      const queryParts = ['select=*']
+  async getGuns(params = {}, options = {}) {
+    const clean = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== '' && value != null),
+    )
+    const page = Math.max(1, Number(clean.page) || 1)
+    const limit = Math.max(1, Number(clean.limit) || 50)
+    const queryKey = `guns:${stableParams(clean)}`
 
-      if (params.search) {
-        queryParts.push(`name=ilike.*${encodeURIComponent(params.search)}*`)
+    return queryCache.fetch(queryKey, async () => {
+      if (IS_SUPABASE) {
+        const queryParts = ['select=*']
+
+        if (clean.search) {
+          const search = encodeURIComponent(clean.search)
+          queryParts.push(
+            `or=(name.ilike.*${search}*,description.ilike.*${search}*)`,
+          )
+        }
+
+        if (clean.category && clean.category !== 'All') {
+          queryParts.push(`type=eq.${encodeURIComponent(clean.category)}`)
+        }
+
+        if (clean.sort_by) {
+          const order = clean.order === 'desc' ? 'desc' : 'asc'
+          queryParts.push(`order=${encodeURIComponent(clean.sort_by)}.${order}`)
+        } else {
+          queryParts.push('order=created_at.desc')
+        }
+
+        const offset = (page - 1) * limit
+        queryParts.push(`limit=${limit + 1}`, `offset=${offset}`)
+
+        const data = await apiClient.get(`/rest/v1/products?${queryParts.join('&')}`)
+        const fetched = Array.isArray(data) ? data.map(normalizeProduct) : []
+        const hasMore = fetched.length > limit
+
+        return {
+          success: true,
+          data: fetched.slice(0, limit),
+          pagination: { page, limit, total: null, hasMore },
+        }
       }
 
-      if (params.category && params.category !== 'All') {
-        queryParts.push(`type=eq.${encodeURIComponent(params.category)}`)
-      }
+      const response = await apiClient.get('/api/v1/recipes', {
+        params: { ...clean, limit: limit + 1 },
+      })
+      if (!response?.success) return response
 
-      if (params.sort_by) {
-        const order = params.order === 'desc' ? 'desc' : 'asc'
-        queryParts.push(`order=${encodeURIComponent(params.sort_by)}.${order}`)
-      } else {
-        queryParts.push('order=created_at.desc')
-      }
-
-      if (params.limit) {
-        queryParts.push(`limit=${params.limit}`)
-      }
-
-      const queryString = queryParts.join('&')
-      const data = await apiClient.get(`/rest/v1/products?${queryString}`)
-      const list = Array.isArray(data) ? data.map(normalizeProduct) : []
+      const backendPagination = response.pagination || {}
+      const items = Array.isArray(response.data) ? response.data : []
+      const hasMore =
+        backendPagination.hasMore ??
+        (backendPagination.total != null
+          ? page * limit < backendPagination.total
+          : items.length > limit)
 
       return {
-        success: true,
-        data: list,
+        ...response,
+        data: items.slice(0, limit),
         pagination: {
-          total: list.length,
-          page: params.page || 1,
-          limit: params.limit || 50,
+          ...backendPagination,
+          page: backendPagination.page ?? page,
+          limit,
+          hasMore,
         },
       }
-    }
-
-    // Fallback: university REST API
-    const clean = Object.fromEntries(
-      Object.entries(params).filter(([, v]) => v !== '' && v != null),
-    )
-    return apiClient.get('/api/v1/recipes', { params: clean })
+    }, options)
   }
 
   /**
    * Fetch a single product by ID.
    */
-  async getGunById(id) {
-    if (IS_SUPABASE) {
-      const data = await apiClient.get(`/rest/v1/products?id=eq.${id}&select=*`)
-      if (Array.isArray(data) && data.length > 0) {
-        return { success: true, data: normalizeProduct(data[0]) }
+  async getGunById(id, options = {}) {
+    return queryCache.fetch(`gun:${id}`, async () => {
+      const encodedId = encodeURIComponent(String(id))
+      if (IS_SUPABASE) {
+        const data = await apiClient.get(`/rest/v1/products?id=eq.${encodedId}&select=*`)
+        if (Array.isArray(data) && data.length > 0) {
+          return { success: true, data: normalizeProduct(data[0]) }
+        }
+        throw new Error('Hardware item not found.')
       }
-      throw new Error('Hardware item not found.')
-    }
-    return apiClient.get(`/api/v1/recipes/${id}`)
+      return apiClient.get(`/api/v1/recipes/${encodedId}`)
+    }, options)
   }
 
   /**
@@ -147,9 +187,12 @@ class GunService {
         headers: { Prefer: 'return=representation' },
       })
       const created = Array.isArray(res) ? res[0] : res
+      invalidateGunQueries()
       return { success: true, data: normalizeProduct(created) }
     }
-    return apiClient.post('/api/v1/recipes', data)
+    const response = await apiClient.post('/api/v1/recipes', data)
+    invalidateGunQueries()
+    return response
   }
 
   /**
@@ -180,9 +223,12 @@ class GunService {
         headers: { Prefer: 'return=representation' },
       })
       const updated = Array.isArray(res) ? res[0] : res
+      invalidateGunQueries()
       return { success: true, data: normalizeProduct(updated) }
     }
-    return apiClient.put(`/api/v1/recipes/${id}`, data)
+    const response = await apiClient.put(`/api/v1/recipes/${id}`, data)
+    invalidateGunQueries()
+    return response
   }
 
   /**
@@ -192,7 +238,9 @@ class GunService {
     if (IS_SUPABASE) {
       return this.updateGun(id, data)
     }
-    return apiClient.patch(`/api/v1/recipes/${id}`, data)
+    const response = await apiClient.patch(`/api/v1/recipes/${id}`, data)
+    invalidateGunQueries()
+    return response
   }
 
   /**
@@ -201,9 +249,12 @@ class GunService {
   async deleteGun(id) {
     if (IS_SUPABASE) {
       await apiClient.delete(`/rest/v1/products?id=eq.${id}`)
+      invalidateGunQueries()
       return { success: true }
     }
-    return apiClient.delete(`/api/v1/recipes/${id}`)
+    const response = await apiClient.delete(`/api/v1/recipes/${id}`)
+    invalidateGunQueries()
+    return response
   }
 }
 

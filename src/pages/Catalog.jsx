@@ -1,9 +1,8 @@
-import { useState, useMemo } from 'react'
+import { lazy, useState, useMemo } from 'react'
 import { RefreshCw, Plus, Loader, AlertCircle, PackageOpen } from 'lucide-react'
 import { useGuns } from '../hooks/useGuns'
 import GUNS_LOCAL from '../data/guns'
 import GunCard from '../components/gun/GunCard'
-import GunDetail from '../components/gun/GunDetail'
 import AdvancedFilter from '../components/common/AdvancedFilter'
 import ConfirmModal from '../components/modals/ConfirmModal'
 import gunService from '../services/gunService'
@@ -12,7 +11,11 @@ import {
   matchesCategory,
   sortItems,
   extractCategories,
+  paginateItems,
 } from '../utils/helpers'
+
+const PAGE_SIZE = 4
+const GunDetail = lazy(() => import('../components/gun/GunDetail.jsx'))
 
 /**
  * Catalog page — the main product listing.
@@ -24,9 +27,26 @@ import {
  * Features: search, category filter, sort, CRUD actions, detail modal.
  */
 export default function Catalog({ onNavigate }) {
-  // ---- API data ----
-  const { guns: apiGuns, loading, error, refetch } = useGuns({ limit: 50 })
+  const [currentPage, setCurrentPage] = useState(1)
   const [useLocal, setUseLocal] = useState(false)
+  const [search, setSearch] = useState('')
+  const [activeCategory, setActiveCategory] = useState('All')
+  const [sortKey, setSortKey] = useState('name')
+  const [sortOrder, setSortOrder] = useState('asc')
+
+  // ---- API data ----
+  const queryParams = useMemo(
+    () => ({
+      page: currentPage,
+      limit: PAGE_SIZE,
+      search,
+      category: activeCategory,
+      sort_by: sortKey,
+      order: sortOrder,
+    }),
+    [currentPage, search, activeCategory, sortKey, sortOrder],
+  )
+  const { guns: apiGuns, loading, error, pagination, refetch } = useGuns(queryParams)
 
   // Decide data source
   const rawGuns = useMemo(() => {
@@ -38,19 +58,35 @@ export default function Catalog({ onNavigate }) {
   }, [apiGuns, error, useLocal])
 
   // ---- filters / sort ----
-  const [search, setSearch] = useState('')
-  const [activeCategory, setActiveCategory] = useState('All')
-  const [sortKey, setSortKey] = useState('name')
-  const [sortOrder, setSortOrder] = useState('asc')
+  const categories = useMemo(
+    () => extractCategories([...GUNS_LOCAL, ...apiGuns]),
+    [apiGuns],
+  )
 
-  const categories = useMemo(() => extractCategories(rawGuns), [rawGuns])
+  const isLocalCatalog = useLocal || (error && apiGuns.length === 0)
 
-  const filteredGuns = useMemo(() => {
+  const filteredLocalGuns = useMemo(() => {
     let result = rawGuns.filter(
       (g) => matchesSearch(g, search) && matchesCategory(g, activeCategory),
     )
     return sortItems(result, sortKey, sortOrder)
   }, [rawGuns, search, activeCategory, sortKey, sortOrder])
+
+  const filteredGuns = useMemo(
+    () =>
+      isLocalCatalog
+        ? paginateItems(filteredLocalGuns, currentPage, PAGE_SIZE)
+        : apiGuns,
+    [apiGuns, currentPage, filteredLocalGuns, isLocalCatalog],
+  )
+
+  const pageInfo = isLocalCatalog
+    ? {
+        page: currentPage,
+        total: filteredLocalGuns.length,
+        hasMore: currentPage * PAGE_SIZE < filteredLocalGuns.length,
+      }
+    : pagination
 
   // ---- detail view ----
   const [selectedGun, setSelectedGun] = useState(null)
@@ -103,7 +139,11 @@ export default function Catalog({ onNavigate }) {
           <h2>Current stock</h2>
           <div className="list-head-right">
             <span className="count">
-              {filteredGuns.length} piece{filteredGuns.length !== 1 ? 's' : ''}
+              {isLocalCatalog
+                ? `${filteredLocalGuns.length} piece${filteredLocalGuns.length !== 1 ? 's' : ''}`
+                : pageInfo?.total != null
+                  ? `${pageInfo.total} piece${pageInfo.total !== 1 ? 's' : ''}`
+                  : `${apiGuns.length} shown`}
             </span>
             {onNavigate && (
               <button
@@ -120,13 +160,17 @@ export default function Catalog({ onNavigate }) {
         {/* Filters */}
         <AdvancedFilter
           search={search}
-          onSearch={setSearch}
+          onSearch={(value) => { setSearch(value); setCurrentPage(1) }}
           categories={categories}
           activeCategory={activeCategory}
-          onCategory={setActiveCategory}
+          onCategory={(value) => { setActiveCategory(value); setCurrentPage(1) }}
           sortKey={sortKey}
           sortOrder={sortOrder}
-          onSort={({ key, order }) => { setSortKey(key); setSortOrder(order) }}
+          onSort={({ key, order }) => {
+            setSortKey(key)
+            setSortOrder(order)
+            setCurrentPage(1)
+          }}
         />
 
         {/* States */}
@@ -148,7 +192,7 @@ export default function Catalog({ onNavigate }) {
               <button
                 type="button"
                 className="btn btn--outline"
-                onClick={() => setUseLocal(true)}
+                onClick={() => { setUseLocal(true); setCurrentPage(1) }}
               >
                 View Local Catalog
               </button>
@@ -164,7 +208,7 @@ export default function Catalog({ onNavigate }) {
         )}
 
         {/* Product grid */}
-        {filteredGuns.length > 0 && (
+        {!loading && filteredGuns.length > 0 && (
           <ul className="stock">
             {filteredGuns.map((gun) => (
               <GunCard
@@ -178,13 +222,40 @@ export default function Catalog({ onNavigate }) {
           </ul>
         )}
 
+        {!loading && (currentPage > 1 || pageInfo?.hasMore) && (
+          <nav className="pagination" aria-label="Catalog pagination">
+            <button
+              type="button"
+              className="btn btn--outline btn--sm"
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={currentPage === 1}
+            >
+              Previous
+            </button>
+            <span aria-live="polite">
+              Page {currentPage}
+              {pageInfo?.total != null && !isLocalCatalog
+                ? ` of ${Math.max(1, Math.ceil(pageInfo.total / PAGE_SIZE))}`
+                : ''}
+            </span>
+            <button
+              type="button"
+              className="btn btn--outline btn--sm"
+              onClick={() => setCurrentPage((page) => page + 1)}
+              disabled={!pageInfo?.hasMore}
+            >
+              Next
+            </button>
+          </nav>
+        )}
+
         {useLocal && (
           <p className="local-notice">
             Showing local catalog (server unavailable).{' '}
             <button
               type="button"
               className="link-btn"
-              onClick={() => { setUseLocal(false); refetch() }}
+              onClick={() => { setUseLocal(false); setCurrentPage(1); refetch() }}
             >
               Retry server
             </button>

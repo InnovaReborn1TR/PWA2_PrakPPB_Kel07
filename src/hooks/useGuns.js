@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import gunService from '../services/gunService'
 
 // ---------------------------------------------------------------------------
@@ -14,28 +14,32 @@ export function useGuns(params = {}) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [pagination, setPagination] = useState(null)
+  const requestId = useRef(0)
 
   // Serialise params so the effect re-runs when they change.
   const paramKey = JSON.stringify(params)
 
-  const fetchGuns = useCallback(async () => {
+  const fetchGuns = useCallback(async (force = false) => {
+    const currentRequestId = ++requestId.current
     try {
       setLoading(true)
       setError(null)
 
-      const response = await gunService.getGuns(params)
+      const response = await gunService.getGuns(params, { force })
 
-      if (response.success) {
+      if (currentRequestId === requestId.current && response.success) {
         setGuns(response.data || [])
         setPagination(response.pagination || null)
-      } else {
+      } else if (currentRequestId === requestId.current) {
         setError(response.message || 'Failed to fetch products.')
       }
     } catch (err) {
-      setError(err.message || 'An error occurred while fetching products.')
-      setGuns([])
+      if (currentRequestId === requestId.current) {
+        setError(err.message || 'An error occurred while fetching products.')
+        setGuns([])
+      }
     } finally {
-      setLoading(false)
+      if (currentRequestId === requestId.current) setLoading(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paramKey])
@@ -44,7 +48,8 @@ export function useGuns(params = {}) {
     fetchGuns()
   }, [fetchGuns])
 
-  return { guns, loading, error, pagination, refetch: fetchGuns }
+  const refetch = useCallback(() => fetchGuns(true), [fetchGuns])
+  return { guns, loading, error, pagination, refetch }
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +63,7 @@ export function useGunById(id) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const fetchGun = useCallback(async () => {
+  const fetchGun = useCallback(async (force = false) => {
     if (!id) {
       setLoading(false)
       return
@@ -67,7 +72,7 @@ export function useGunById(id) {
       setLoading(true)
       setError(null)
 
-      const response = await gunService.getGunById(id)
+      const response = await gunService.getGunById(id, { force })
 
       if (response.success) {
         setGun(response.data)
@@ -86,5 +91,6 @@ export function useGunById(id) {
     fetchGun()
   }, [fetchGun])
 
-  return { gun, loading, error, refetch: fetchGun }
+  const refetch = useCallback(() => fetchGun(true), [fetchGun])
+  return { gun, loading, error, refetch }
 }

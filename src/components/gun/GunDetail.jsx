@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ArrowLeft, Star, Send, Loader } from 'lucide-react'
 import FavoriteButton from '../common/FavoriteButton'
+import ShareButton from '../common/ShareButton'
 import { useReviews, useCreateReview } from '../../hooks/useReviews'
 import { getUserIdentifier } from '../../services/userService'
 import { formatPrice, averageRating } from '../../utils/helpers'
@@ -19,9 +20,12 @@ export default function GunDetail({ gun, onBack, onEdit, onDelete }) {
   const category = gun.type || gun.category || '—'
   const caliber = gun.caliber || gun.difficulty || ''
   const price = gun.price ?? gun.cook_time ?? 0
+  const hasServerId = gun.id && !String(gun.id).startsWith('local-')
 
   // Reviews
-  const { reviews, loading: reviewsLoading, refetch: refetchReviews } = useReviews(gun.id)
+  const { reviews, loading: reviewsLoading, refetch: refetchReviews } = useReviews(
+    hasServerId ? gun.id : null,
+  )
   const { createReview, loading: submitting } = useCreateReview()
   const [rating, setRating] = useState(5)
   const [comment, setComment] = useState('')
@@ -84,6 +88,7 @@ export default function GunDetail({ gun, onBack, onEdit, onDelete }) {
 
           <div className="detail-actions">
             <FavoriteButton gunId={gun.id || gun.name} />
+            <ShareButton gun={gun} />
             {onEdit && (
               <button type="button" className="btn btn--outline" onClick={() => onEdit(gun)}>
                 Edit
@@ -167,7 +172,7 @@ export default function GunDetail({ gun, onBack, onEdit, onDelete }) {
           <button
             type="submit"
             className="btn btn--primary"
-            disabled={submitting || !gun.id}
+            disabled={submitting || !hasServerId}
           >
             {submitting ? (
               <><Loader size={16} className="spin" /> Submitting…</>
@@ -178,7 +183,7 @@ export default function GunDetail({ gun, onBack, onEdit, onDelete }) {
 
           {reviewError && <p className="form-error">{reviewError}</p>}
           {reviewSuccess && <p className="form-success">{reviewSuccess}</p>}
-          {!gun.id && (
+          {!hasServerId && (
             <p className="form-hint">
               Reviews require a server-generated product ID. This product is local-only.
             </p>
