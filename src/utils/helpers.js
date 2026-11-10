@@ -50,12 +50,6 @@ export const sortItems = (items, key = 'name', order = 'asc') => {
   return order === 'desc' ? sorted.reverse() : sorted
 }
 
-export const paginateItems = (items, page, pageSize) => {
-  const safePage = Math.max(1, Math.floor(Number(page) || 1))
-  const safePageSize = Math.max(1, Math.floor(Number(pageSize) || 1))
-  return items.slice((safePage - 1) * safePageSize, safePage * safePageSize)
-}
-
 /**
  * Truncate a string to `max` characters, adding "…" when clipped.
  */

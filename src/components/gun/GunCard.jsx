@@ -1,5 +1,4 @@
 import FavoriteButton from '../common/FavoriteButton'
-import ShareButton from '../common/ShareButton'
 import { formatPrice, truncate } from '../../utils/helpers'
 
 /**
@@ -51,7 +50,6 @@ export default function GunCard({ gun, onSelect, onEdit, onDelete }) {
       {/* Floating actions row */}
       <div className="card-actions">
         <FavoriteButton gunId={gun.id || gun.name} />
-        <ShareButton gun={gun} className="card-act-btn" iconOnly />
 
         {onEdit && (
           <button
